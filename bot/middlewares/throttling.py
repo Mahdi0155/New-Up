@@ -1,31 +1,24 @@
-import asyncio
-from aiogram.dispatcher import DEFAULT_RATE_LIMIT
+from aiogram.dispatcher.handler import CancelHandler, current_handler
 from aiogram.dispatcher.middlewares import BaseMiddleware
-from aiogram import types
-from typing import Callable
-
+from aiogram.types import Message
 
 class ThrottlingMiddleware(BaseMiddleware):
-    def __init__(self, limit: float = DEFAULT_RATE_LIMIT, key_prefix: str = 'antiflood_'):
+    def __init__(self, limit=0.5):
         self.rate_limit = limit
-        self.prefix = key_prefix
+        self._user_last_call = {}
         super(ThrottlingMiddleware, self).__init__()
 
-    async def on_process_message(self, message: types.Message, data: dict):
-        handler = data.get('handler')
-        dispatcher = self.dispatcher
+    async def on_process_message(self, message: Message, data: dict):
+        handler = current_handler()
+        if handler is None:
+            return
 
-        if handler:
-            limit = getattr(handler, 'throttling_rate_limit', self.rate_limit)
-            key = getattr(handler, 'throttling_key', f"{self.prefix}_{handler.__name__}")
-        else:
-            limit = self.rate_limit
-            key = f"{self.prefix}_message"
+        user_id = message.from_user.id
+        current_time = message.date.timestamp()
 
-        try:
-            await dispatcher.throttle(key, rate=limit)
-        except asyncio.exceptions.CancelledError:
-            raise
-        except Exception:
-            await message.reply("لطفا کمی آهسته‌تر!")
-            raise
+        if user_id in self._user_last_call:
+            delta = current_time - self._user_last_call[user_id]
+            if delta < self.rate_limit:
+                raise CancelHandler()
+
+        self._user_last_call[user_id] = current_time
