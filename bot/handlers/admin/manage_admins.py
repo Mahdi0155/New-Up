@@ -1,53 +1,40 @@
 from aiogram import types
 from aiogram.dispatcher import FSMContext
-from aiogram.types import CallbackQuery
+from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 
-from loader import dp, db
-from states.admin import AdminStates
-from keyboards.default.admin import manage_admins_keyboard, back_to_admin_panel_keyboard
+from loader import dp, db, bot
+from states import AddAdmin, RemoveAdmin
+from filters import IsMainAdmin
+from utils import get_admins_keyboard
 
-
-@dp.message_handler(text="👤 مدیریت ادمین ها", state="*")
-async def manage_admins_handler(message: types.Message, state: FSMContext):
-    await state.finish()
-    await message.answer("لطفا یک گزینه را انتخاب کنید:", reply_markup=manage_admins_keyboard())
-
-
-@dp.message_handler(text="➕ افزودن ادمین جدید", state="*")
+@dp.message_handler(IsMainAdmin(), text="➕ اضافه کردن ادمین")
 async def add_admin_handler(message: types.Message):
-    await message.answer("لطفا آیدی عددی ادمین جدید را ارسال کنید:", reply_markup=back_to_admin_panel_keyboard())
-    await AdminStates.waiting_for_admin_id.set()
+    await message.answer("لطفا آیدی عددی ادمین جدید را ارسال کنید:")
+    await AddAdmin.waiting_for_admin_id.set()
 
-
-@dp.message_handler(state=AdminStates.waiting_for_admin_id)
-async def save_admin_handler(message: types.Message, state: FSMContext):
-    if not message.text.isdigit():
-        await message.answer("آیدی باید عددی باشد. لطفا دوباره ارسال کنید.")
+@dp.message_handler(state=AddAdmin.waiting_for_admin_id)
+async def save_new_admin(message: types.Message, state: FSMContext):
+    admin_id = message.text.strip()
+    if not admin_id.isdigit():
+        await message.answer("آیدی نامعتبر است. فقط عدد ارسال کنید.")
         return
-    admin_id = int(message.text)
-    db.add_admin(admin_id)
-    await message.answer("ادمین با موفقیت اضافه شد.", reply_markup=manage_admins_keyboard())
+    await db.add_admin(int(admin_id))
+    await message.answer("✅ ادمین جدید اضافه شد.")
     await state.finish()
 
-
-@dp.message_handler(text="➖ حذف ادمین", state="*")
-async def delete_admin_handler(message: types.Message):
-    admins = db.get_admins()
+@dp.message_handler(IsMainAdmin(), text="➖ حذف ادمین")
+async def remove_admin_handler(message: types.Message):
+    admins = await db.get_admins()
     if not admins:
-        await message.answer("ادمینی وجود ندارد.", reply_markup=manage_admins_keyboard())
+        await message.answer("هیچ ادمینی ثبت نشده است.")
         return
-    text = "آیدی ادمین‌هایی که می‌توانید حذف کنید:\n\n"
-    text += "\n".join(str(admin) for admin in admins)
-    await message.answer(text, reply_markup=back_to_admin_panel_keyboard())
-    await AdminStates.waiting_for_admin_id_to_delete.set()
+    keyboard = await get_admins_keyboard(admins)
+    await message.answer("ادمینی که میخواهید حذف کنید را انتخاب کنید:", reply_markup=keyboard)
+    await RemoveAdmin.waiting_for_admin_id.set()
 
-
-@dp.message_handler(state=AdminStates.waiting_for_admin_id_to_delete)
-async def remove_admin_handler(message: types.Message, state: FSMContext):
-    if not message.text.isdigit():
-        await message.answer("آیدی باید عددی باشد. لطفا دوباره ارسال کنید.")
-        return
-    admin_id = int(message.text)
-    db.remove_admin(admin_id)
-    await message.answer("ادمین با موفقیت حذف شد.", reply_markup=manage_admins_keyboard())
+@dp.callback_query_handler(state=RemoveAdmin.waiting_for_admin_id)
+async def confirm_remove_admin(call: types.CallbackQuery, state: FSMContext):
+    admin_id = call.data
+    await db.remove_admin(int(admin_id))
+    await call.message.edit_text("✅ ادمین حذف شد.")
     await state.finish()
