@@ -1,20 +1,28 @@
-from aiogram import types
-from aiogram.dispatcher import FSMContext
-from loader import dp, db
-from states.admin_states import AddAdmin
-from keyboards.inline.admin_menu import admin_menu_keyboard
+from aiogram import Router, F
+from aiogram.types import Message, CallbackQuery
+from aiogram.fsm.context import FSMContext
 
-@dp.message_handler(commands=["addadmin"], state="*")
-async def add_admin_start(message: types.Message):
-    await message.answer("لطفاً آیدی عددی ادمین جدید را وارد کنید:")
-    await AddAdmin.waiting_for_admin_id.set()
+from filters.admin_only import AdminFilter
+from keyboards import admin_panel
+from database.admins import add_admin
 
-@dp.message_handler(state=AddAdmin.waiting_for_admin_id)
-async def add_admin_process(message: types.Message, state: FSMContext):
-    if not message.text.isdigit():
-        await message.answer("آیدی باید فقط عدد باشد. دوباره تلاش کنید:")
-        return
-    admin_id = int(message.text)
-    await db.add_admin(admin_id)
-    await message.answer("ادمین جدید با موفقیت اضافه شد.", reply_markup=await admin_menu_keyboard())
-    await state.finish()
+router = Router()
+router.message.filter(AdminFilter())
+router.callback_query.filter(AdminFilter())
+
+@router.callback_query(F.data == "add_admin")
+async def ask_for_admin_id(call: CallbackQuery, state: FSMContext):
+    await call.message.edit_text("آیدی عددی فرد موردنظر را ارسال کنید:\n(فقط عدد)", reply_markup=admin_panel.back_to_menu())
+    await state.set_state("waiting_for_admin_id")
+
+@router.message(F.text, F.text.regexp(r"^\d+$"))
+async def save_admin_id(message: Message, state: FSMContext):
+    current_state = await state.get_state()
+    if current_state == "waiting_for_admin_id":
+        user_id = int(message.text)
+        success = add_admin(user_id)
+        if success:
+            await message.answer("✅ ادمین جدید با موفقیت اضافه شد.", reply_markup=admin_panel.menu())
+        else:
+            await message.answer("⚠️ این کاربر قبلاً ادمین بوده یا خطایی رخ داده.", reply_markup=admin_panel.menu())
+        await state.clear()
