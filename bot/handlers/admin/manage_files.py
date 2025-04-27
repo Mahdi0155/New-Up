@@ -1,59 +1,44 @@
-from aiogram import types, Router
+from aiogram import types, Router, F
 from aiogram.fsm.context import FSMContext
-from aiogram.types import CallbackQuery
 
-from bot.database.database import get_all_files, delete_file_by_id
-from bot.keyboards.manage_files import generate_files_list_keyboard
-from bot.keyboards.back import back_to_admin_panel
+from bot.database.database import Database
+from bot.keyboards.manage_files import get_files_keyboard
+from bot.keyboards.manage_files import back_keyboard
+from bot.states.manage_files import ManageFiles
+from bot.utils.get_file_message import get_file_message
+from bot.utils.delete_file import delete_file
 
 router = Router()
+db = Database()
 
-@router.callback_query(lambda c: c.data == 'manage_files')
-async def manage_files_handler(callback_query: CallbackQuery, state: FSMContext):
-    await state.set_state("awaiting_file_number")
-    files = await get_all_files()
-    if not files:
-        await callback_query.message.answer("هیچ فایلی برای مدیریت وجود ندارد.", reply_markup=back_to_admin_panel())
-        return
-    await callback_query.message.answer("لطفاً شماره فایلی که میخواهید مدیریت کنید را وارد کنید:",
-                                        reply_markup=generate_files_list_keyboard(files))
+@router.callback_query(F.data == "manage_files")
+async def manage_files(callback: types.CallbackQuery, state: FSMContext):
+    await state.clear()
+    files_count = await db.count_files()
+    if files_count == 0:
+        await callback.message.edit_text("هیچ فایلی موجود نیست.", reply_markup=back_keyboard())
+    else:
+        await state.set_state(ManageFiles.file_number)
+        await callback.message.edit_text(
+            "شماره فایل مورد نظر را ارسال کنید:\n\n"
+            f"تعداد فایل‌ها: {files_count}",
+            reply_markup=back_keyboard()
+        )
 
-
-@router.message(lambda message: message.text.isdigit())
-async def file_number_received(message: types.Message, state: FSMContext):
-    current_state = await state.get_state()
-    if current_state != "awaiting_file_number":
-        return
+@router.message(ManageFiles.file_number, F.text.isdigit())
+async def get_file_by_number(message: types.Message, state: FSMContext):
     file_number = int(message.text)
-    files = await get_all_files()
-    if file_number < 1 or file_number > len(files):
-        await message.answer("شماره فایل معتبر نیست.", reply_markup=back_to_admin_panel())
+    file_data = await db.get_file_by_number(file_number)
+    if not file_data:
+        await message.answer("فایلی با این شماره وجود ندارد.", reply_markup=back_keyboard())
         return
 
-    selected_file = files[file_number - 1]
-    file_id, file_type, caption = selected_file
-
-    if file_type == 'photo':
-        await message.answer_photo(file_id, caption=caption,
-                                   reply_markup=types.InlineKeyboardMarkup(
-                                       inline_keyboard=[
-                                           [types.InlineKeyboardButton(text="❌ حذف فایل", callback_data=f"delete_file:{file_id}")],
-                                           [types.InlineKeyboardButton(text="🔙 بازگشت", callback_data="back_to_manage_files")]
-                                       ]
-                                   ))
-    elif file_type == 'video':
-        await message.answer_video(file_id, caption=caption,
-                                   reply_markup=types.InlineKeyboardMarkup(
-                                       inline_keyboard=[
-                                           [types.InlineKeyboardButton(text="❌ حذف فایل", callback_data=f"delete_file:{file_id}")],
-                                           [types.InlineKeyboardButton(text="🔙 بازگشت", callback_data="back_to_manage_files")]
-                                       ]
-                                   ))
-
+    file_message = await get_file_message(message.bot, file_data)
+    await message.answer(**file_message, reply_markup=get_files_keyboard(file_number))
     await state.clear()
 
-@router.callback_query(lambda c: c.data and c.data.startswith('delete_file:'))
-async def delete_file_handler(callback_query: CallbackQuery):
-    file_id = callback_query.data.split(":")[1]
-    await delete_file_by_id(file_id)
-    await callback_query.message.edit_text("فایل با موفقیت حذف شد.", reply_markup=back_to_admin_panel())
+@router.callback_query(F.data.startswith("delete_file:"))
+async def delete_file_callback(callback: types.CallbackQuery):
+    file_id = int(callback.data.split(":")[1])
+    await delete_file(callback.bot, file_id)
+    await callback.message.edit_text("فایل با موفقیت حذف شد.", reply_markup=back_keyboard())
