@@ -1,1 +1,3 @@
-from .throttling import ThrottlingMiddleware# این فایل خالیه برای اینکه پوشه middlewares به عنوان یک پکیج شناخته بشه
+from .throttling import ThrottlingMiddleware
+
+__all__ = ["ThrottlingMiddleware"]
